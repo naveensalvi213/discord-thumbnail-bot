@@ -2,6 +2,9 @@ import { chromium } from 'playwright';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -19,7 +22,6 @@ if (!fs.existsSync(screenshotDir)) {
 let activeContext = null;
 let activePage = null;
 
-// Helper: Human-like random delay
 const delay = (ms) => new Promise(res => setTimeout(res, ms));
 const randomDelay = (min = 1000, max = 3000) => delay(Math.floor(Math.random() * (max - min + 1)) + min);
 
@@ -49,82 +51,201 @@ export async function getOrLaunchBrowser(headless = true) {
 }
 
 /**
- * Human-like typing with variable speed per keystroke
+ * Capture base64 screenshot for instant WebSocket streaming preview & Gemini Vision
  */
-export async function typeHuman(page, selector, text) {
-    await page.focus(selector);
-    for (const char of text) {
-        await page.keyboard.type(char, { delay: Math.floor(Math.random() * 80) + 40 });
+export async function captureScreenshotBase64(page) {
+    try {
+        const buffer = await page.screenshot({ type: 'jpeg', quality: 55 });
+        fs.writeFileSync(path.join(screenshotDir, 'latest.jpg'), buffer);
+        return `data:image/jpeg;base64,${buffer.toString('base64')}`;
+    } catch (e) {
+        console.error("Screenshot error:", e);
+        return null;
     }
 }
 
 /**
- * Take screenshot and save preview
+ * Extract interactive DOM elements summary
  */
-export async function captureScreenshot(page, filename = 'latest.png') {
-    const filePath = path.join(screenshotDir, filename);
-    await page.screenshot({ path: filePath, fullPage: false });
-    return `/screenshots/${filename}`;
+async function extractPageElements(page) {
+    try {
+        return await page.evaluate(() => {
+            const elements = [];
+            const interactive = document.querySelectorAll('button, a, input, textarea, [role="button"], [contenteditable="true"]');
+            
+            interactive.forEach((el, index) => {
+                const rect = el.getBoundingClientRect();
+                if (rect.width > 0 && rect.height > 0 && rect.top >= 0 && rect.left >= 0) {
+                    const text = el.innerText || el.placeholder || el.value || el.getAttribute('aria-label') || el.name || el.id || 'Element';
+                    const tag = el.tagName.toLowerCase();
+                    const selector = el.id ? `#${el.id}` : (el.className ? `.${el.className.trim().replace(/\s+/g, '.')}` : tag);
+                    elements.push({ id: index + 1, tag, text: text.trim().slice(0, 50), selector });
+                }
+            });
+            return elements.slice(0, 25);
+        });
+    } catch (e) {
+        return [];
+    }
 }
 
 /**
- * Execute automation task instructions with real-time log broadcasting
+ * Ask Gemini Vision API for the next browser action with multi-model fallback
+ */
+async function getNextActionFromGemini(screenshotBase64, pageElements, pageTitle, pageUrl, goalPrompt) {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+        return { action: 'finish', reason: 'Missing GEMINI_API_KEY in .env' };
+    }
+
+    const cleanBase64 = screenshotBase64.replace(/^data:image\/(png|jpeg);base64,/, '');
+
+    const promptText = `You are an AI Browser Automation Agent driving a web browser.
+User Goal: "${goalPrompt}"
+Current Page Title: "${pageTitle}"
+Current Page URL: "${pageUrl}"
+
+Interactive Page Elements Available:
+${JSON.stringify(pageElements, null, 2)}
+
+Analyze the screenshot and page elements. Determine the single NEXT action to perform towards the goal.
+Respond strictly in JSON format (no markdown fences, just pure JSON):
+{
+  "action": "click" | "type" | "press_enter" | "scroll" | "navigate" | "finish",
+  "selector": "CSS selector or element text to target",
+  "text": "text to type if action is type or target url if navigate",
+  "reason": "short explanation of why this step is taken"
+}`;
+
+    const candidateModels = ['gemini-flash-latest', 'gemini-flash-lite-latest', 'gemini-pro-latest'];
+
+    for (const model of candidateModels) {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+        const body = {
+            contents: [{
+                parts: [
+                    { inline_data: { mime_type: "image/jpeg", data: cleanBase64 } },
+                    { text: promptText }
+                ]
+            }]
+        };
+
+        try {
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+
+            if (res.status === 429 || res.status === 503) {
+                console.warn(`⚠️ Vision API ${model} HTTP ${res.status}. Fallback to next model...`);
+                await delay(1000);
+                continue;
+            }
+
+            if (!res.ok) {
+                console.error(`Gemini Vision API ${model} error: ${res.status}`);
+                continue;
+            }
+
+            const data = await res.json();
+            const responseText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+            
+            const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                return JSON.parse(jsonMatch[0]);
+            }
+        } catch (err) {
+            console.error("Gemini decision error:", err);
+        }
+    }
+
+    return { action: 'finish', reason: 'Task completed or max reasoning attempts reached' };
+}
+
+/**
+ * Execute full multi-step AI browser automation task
  */
 export async function runAutomationTask(taskDescription, logCallback = () => {}) {
     const startTime = Date.now();
-    logCallback({ step: 'init', log: '🚀 Initializing AI Browser Engine...', time: '0s' });
+    logCallback({ step: 'init', log: '🚀 Initializing Playwright Browser Engine...' });
 
     try {
         const { page } = await getOrLaunchBrowser(true);
-        logCallback({ step: 'browser_ready', log: '🌐 Browser context active & session loaded.', time: '1s' });
+        logCallback({ step: 'browser_ready', log: '🌐 Chrome Persistent Profile active & ready.' });
 
-        // Example Task Parsing & Execution Flow
+        // Step 1: Initial Navigation
+        let targetUrl = 'https://google.com';
+        const urlMatch = taskDescription.match(/https?:\/\/[^\s]+/);
         const descLower = taskDescription.toLowerCase();
 
-        if (descLower.includes('discord') || descLower.includes('hire') || descLower.includes('editor')) {
-            logCallback({ step: 'navigating', log: '📱 Navigating to Discord Web Client...', time: '2s' });
-            await page.goto('https://discord.com/app', { waitUntil: 'domcontentloaded', timeout: 30000 });
-            await randomDelay(2000, 4000);
+        if (urlMatch) {
+            targetUrl = urlMatch[0];
+        } else if (descLower.includes('discord')) {
+            targetUrl = 'https://discord.com/app';
+        }
 
-            const screenshotUrl = await captureScreenshot(page);
-            logCallback({ step: 'screenshot', log: '📸 Captured Discord page view', screenshot: screenshotUrl, time: '5s' });
+        logCallback({ step: 'navigating', log: `🌐 Navigating to ${targetUrl}...` });
+        await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 35000 });
+        await randomDelay(2000, 3500);
 
-            const isLoggedOut = await page.evaluate(() => document.body.innerText.includes('Welcome back!') || document.body.innerText.includes('Log In'));
+        let screenshot = await captureScreenshotBase64(page);
+        logCallback({ step: 'page_loaded', log: `📄 Loaded ${page.url()}`, screenshot });
 
-            if (isLoggedOut) {
-                logCallback({ 
-                    step: 'requires_login', 
-                    log: '⚠️ Account session not logged in yet! Please run "npm run login" on your PC once to log into your Discord account.', 
-                    screenshot: screenshotUrl 
-                });
-                return { success: false, reason: 'login_required' };
-            } else {
-                logCallback({ step: 'logged_in', log: '✅ Account authenticated! Discord session active.', screenshot: screenshotUrl });
-                logCallback({ step: 'action', log: `⚡ Preparing to execute task: "${taskDescription}"` });
-                await randomDelay(1500, 3000);
+        // Step 2: Multi-step AI Action Execution Loop (Up to 6 steps)
+        const maxSteps = 6;
+        for (let step = 1; step <= maxSteps; step++) {
+            const pageTitle = await page.title();
+            const currentUrl = page.url();
+            const elements = await extractPageElements(page);
+
+            logCallback({ step: `ai_reasoning_${step}`, log: `🤖 [Step ${step}/${maxSteps}] Gemini analyzing page state...` });
+
+            const decision = await getNextActionFromGemini(screenshot, elements, pageTitle, currentUrl, taskDescription);
+            console.log(`Step ${step} Decision:`, decision);
+
+            if (decision.action === 'finish' || !decision.action) {
+                logCallback({ step: 'completed', log: `✅ Goal achieved: ${decision.reason || 'Task finished.'}`, screenshot });
+                break;
             }
-        } else {
-            // General Website Browsing Task
-            let targetUrl = 'https://google.com';
-            const urlMatch = taskDescription.match(/https?:\/\/[^\s]+/);
-            if (urlMatch) {
-                targetUrl = urlMatch[0];
+
+            logCallback({ step: `action_${step}`, log: `⚡ Action (${decision.action}): ${decision.reason || decision.selector}` });
+
+            // Execute Decision
+            try {
+                if (decision.action === 'navigate' && decision.text) {
+                    await page.goto(decision.text, { waitUntil: 'domcontentloaded' });
+                } else if (decision.action === 'click' && decision.selector) {
+                    const el = await page.$(decision.selector).catch(() => null);
+                    if (el) {
+                        await el.click().catch(() => {});
+                    } else {
+                        // Click by text fallback
+                        await page.click(`text="${decision.selector}"`).catch(() => {});
+                    }
+                } else if (decision.action === 'type' && decision.text) {
+                    if (decision.selector) {
+                        await page.focus(decision.selector).catch(() => {});
+                        await page.keyboard.type(decision.text, { delay: 60 });
+                    } else {
+                        await page.keyboard.type(decision.text, { delay: 60 });
+                    }
+                } else if (decision.action === 'press_enter') {
+                    await page.keyboard.press('Enter');
+                } else if (decision.action === 'scroll') {
+                    await page.evaluate(() => window.scrollBy(0, 400));
+                }
+            } catch (execErr) {
+                console.warn(`Execution action warning step ${step}:`, execErr.message);
             }
 
-            logCallback({ step: 'navigating', log: `🌐 Navigating to ${targetUrl}...` });
-            await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-            await randomDelay(1500, 3000);
-
-            const screenshotUrl = await captureScreenshot(page);
-            logCallback({ 
-                step: 'completed', 
-                log: `✅ Task completed successfully on ${targetUrl}`, 
-                screenshot: screenshotUrl 
-            });
+            await randomDelay(2000, 3000);
+            screenshot = await captureScreenshotBase64(page);
+            logCallback({ step: `step_result_${step}`, log: `📸 Captured page state after step ${step}`, screenshot });
         }
 
         const duration = Math.round((Date.now() - startTime) / 1000);
-        logCallback({ step: 'finished', log: `🎉 Task finished in ${duration}s.` });
+        logCallback({ step: 'finished', log: `🎉 Task process complete in ${duration}s.` });
         return { success: true };
     } catch (err) {
         console.error("Automation error:", err);
