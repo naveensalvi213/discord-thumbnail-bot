@@ -361,9 +361,20 @@
 
         <!-- Input Panel -->
         <div class="input-panel">
+            <!-- Image Attachment Bar -->
+            <div id="attached-image-bar" style="display: none; padding: 6px 12px; margin-bottom: 8px; background: rgba(139, 92, 246, 0.15); border: 1px solid rgba(139, 92, 246, 0.4); border-radius: 10px; align-items: center; justify-content: space-between;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <img id="attached-image-thumb" src="" style="width: 32px; height: 32px; border-radius: 6px; object-fit: cover;">
+                    <span style="font-size: 12px; color: var(--text-color); font-weight: 500;">Image attached for Gemini</span>
+                </div>
+                <button id="remove-attached-image" style="background: transparent; border: none; color: #ef4444; font-size: 18px; cursor: pointer; padding: 2px 6px;">×</button>
+            </div>
+
             <div class="input-container">
+                <button class="icon-btn mic-btn" id="upload-btn" title="Upload Image to Gemini">📎</button>
+                <input type="file" id="image-file-input" accept="image/*" style="display: none;">
                 <button class="icon-btn mic-btn" id="mic-btn" aria-label="Dictate message">🎤</button>
-                <input type="text" class="chat-input" id="chat-input" placeholder="Ask anything or request browser task..." aria-label="Message input">
+                <input type="text" class="chat-input" id="chat-input" placeholder="Ask anything, upload image, or request task..." aria-label="Message input">
                 <button class="icon-btn send-btn" id="send-btn" aria-label="Send message">➔</button>
             </div>
         </div>
@@ -384,7 +395,12 @@
             </div>
 
             <div id="screenshot-preview-container" style="margin-top: 10px; display: none;">
-                <label style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700;">Live Browser Preview</label>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <label style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700;">Live Browser Preview</label>
+                    <button id="download-drawer-screenshot-btn" style="background: rgba(6, 182, 212, 0.2); border: 1px solid rgba(6, 182, 212, 0.4); color: white; border-radius: 6px; padding: 4px 10px; font-size: 11px; font-weight: 600; cursor: pointer;">
+                        ⬇️ Download Image
+                    </button>
+                </div>
                 <img id="live-screenshot" src="" style="width: 100%; border-radius: 10px; border: 1px solid var(--border-color); margin-top: 6px;">
             </div>
         </div>
@@ -482,6 +498,55 @@
             appendMessage("bot", `⚙️ Configuration updated! Active keys: **${apiKeysPool.length}** account(s). Model: **${selectedModel}**.`);
         });
 
+        // Image Attachment State
+        let attachedImageData = null;
+        const uploadBtn = document.getElementById("upload-btn");
+        const imageFileInput = document.getElementById("image-file-input");
+        const attachedImageBar = document.getElementById("attached-image-bar");
+        const attachedImageThumb = document.getElementById("attached-image-thumb");
+        const removeAttachedImage = document.getElementById("remove-attached-image");
+        const downloadDrawerScreenshotBtn = document.getElementById("download-drawer-screenshot-btn");
+
+        // Handle Image Attachment
+        uploadBtn.addEventListener("click", () => imageFileInput.click());
+        imageFileInput.addEventListener("change", (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (evt) => {
+                attachedImageData = evt.target.result;
+                attachedImageThumb.src = attachedImageData;
+                attachedImageBar.style.display = "flex";
+            };
+            reader.readAsDataURL(file);
+        });
+
+        removeAttachedImage.addEventListener("click", () => {
+            attachedImageData = null;
+            imageFileInput.value = "";
+            attachedImageBar.style.display = "none";
+        });
+
+        // Download Base64 Helper
+        function downloadBase64Image(dataUrl, filename = 'browser_screenshot.jpg') {
+            const link = document.createElement('a');
+            link.href = dataUrl;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        let lastCapturedScreenshot = '';
+        downloadDrawerScreenshotBtn.addEventListener("click", () => {
+            if (lastCapturedScreenshot) {
+                downloadBase64Image(lastCapturedScreenshot, 'live_browser_preview.jpg');
+            } else {
+                alert("No live browser preview image available to download yet.");
+            }
+        });
+
         // WebSocket Client Setup
         let ws = null;
         function connectWebSocket() {
@@ -531,7 +596,21 @@
 
             if (data.screenshot) {
                 screenshotPreviewContainer.style.display = "block";
-                liveScreenshot.src = data.screenshot + '?t=' + Date.now();
+                lastCapturedScreenshot = data.screenshot;
+
+                // Fix Base64 Data URI loading (Do NOT append ?t= to data: URIs!)
+                if (data.screenshot.startsWith("data:")) {
+                    liveScreenshot.src = data.screenshot;
+                } else {
+                    liveScreenshot.src = data.screenshot + '?t=' + Date.now();
+                }
+            }
+
+            // Share inline screenshot in chat when task completes!
+            if (data.step === 'completed' || data.step === 'finished') {
+                if (lastCapturedScreenshot) {
+                    appendScreenshotToChat(lastCapturedScreenshot, data.log);
+                }
             }
         }
 
@@ -551,6 +630,30 @@
                     addAutomationLog({ log: `❌ Error sending task to server: ${err.message}` });
                 });
             }
+        }
+
+        // Render Inline Screenshot in Chat with Download Button
+        function appendScreenshotToChat(dataUrl, caption = 'Browser View Screenshot') {
+            const msgDiv = document.createElement("div");
+            msgDiv.classList.add("chat-msg", "bot");
+            const btnId = 'dl-chat-btn-' + Math.random().toString(36).substr(2, 9);
+            
+            msgDiv.innerHTML = `
+                <div style="font-size: 12px; font-weight: 600; color: #06b6d4; margin-bottom: 6px;">📸 ${parseMarkdown(caption)}</div>
+                <img src="${dataUrl}" style="width: 100%; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 8px;">
+                <button id="${btnId}" style="width: 100%; padding: 8px; background: rgba(255, 255, 255, 0.1); color: white; border: 1px solid var(--border-color); border-radius: 6px; font-size: 12px; cursor: pointer; font-weight: 600;">
+                    ⬇️ Download Screenshot
+                </button>
+            `;
+            chatBody.appendChild(msgDiv);
+            scrollToBottom();
+
+            setTimeout(() => {
+                const btn = document.getElementById(btnId);
+                if (btn) {
+                    btn.addEventListener("click", () => downloadBase64Image(dataUrl, 'browser_screenshot.jpg'));
+                }
+            }, 100);
         }
 
         // Chat helpers
@@ -665,7 +768,7 @@
         }
 
         // Gemini REST API with Multi-Turn Conversation Memory & Multi-Account Key Auto-Rotation
-        async function fetchGeminiReply(prompt) {
+        async function fetchGeminiReply(prompt, imageBase64Data = null) {
             if (!apiKeysPool || apiKeysPool.length === 0) {
                 return { text: "❌ Error: No API Keys available. Open settings to configure your Gemini API Key.", isTask: false };
             }
@@ -681,10 +784,18 @@
             const systemInstruction = `You are Antigravity OmniChat AI, an intelligent personal assistant capable of both conversation and structuring web/automation tasks. 
 If the user asks to perform a web or external task (e.g. hire editors on Discord, send messages, post updates, scrape web, browse sites), respond by outlining a clear step-by-step execution plan and format your task parameters clearly. Remember context from previous user turns in this conversation.`;
 
-            // Prepare payload contents with FULL conversation history memory!
+            // Prepare current user turn content parts (text + optional uploaded image)
+            const userTurnParts = [];
+            if (imageBase64Data) {
+                const mimeType = imageBase64Data.split(';')[0].split(':')[1] || 'image/jpeg';
+                const base64Data = imageBase64Data.split(',')[1];
+                userTurnParts.push({ inline_data: { mime_type: mimeType, data: base64Data } });
+            }
+            userTurnParts.push({ text: prompt });
+
             const historyPayload = [
                 ...conversationHistory,
-                { role: "user", parts: [{ text: prompt }] }
+                { role: "user", parts: userTurnParts }
             ];
 
             for (const targetModel of uniqueModels) {
@@ -773,9 +884,17 @@ If the user asks to perform a web or external task (e.g. hire editors on Discord
         // Submit message flow
         async function handleSend() {
             const prompt = chatInput.value.trim();
-            if (!prompt) return;
+            if (!prompt && !attachedImageData) return;
 
-            appendMessageUI("user", prompt);
+            const sendText = prompt || "Analyze this uploaded image";
+            const imagePayload = attachedImageData;
+
+            // Clear image attachment preview bar
+            attachedImageData = null;
+            imageFileInput.value = "";
+            attachedImageBar.style.display = "none";
+
+            appendMessageUI("user", sendText);
             chatInput.value = "";
 
             const loadingMsg = document.createElement("div");
@@ -784,10 +903,17 @@ If the user asks to perform a web or external task (e.g. hire editors on Discord
             chatBody.appendChild(loadingMsg);
             scrollToBottom();
 
-            const result = await fetchGeminiReply(prompt);
+            const result = await fetchGeminiReply(sendText, imagePayload);
             
             loadingMsg.remove();
-            appendMessageUI("bot", result.text, result.isTask, prompt);
+            appendMessageUI("bot", result.text, result.isTask, sendText);
+
+            // Check if user specifically asked to share screenshot
+            if (sendText.toLowerCase().includes("screenshot") || sendText.toLowerCase().includes("share image")) {
+                if (lastCapturedScreenshot) {
+                    appendScreenshotToChat(lastCapturedScreenshot, "Browser Screenshot");
+                }
+            }
         }
 
         sendBtn.addEventListener("click", handleSend);
@@ -799,6 +925,3 @@ If the user asks to perform a web or external task (e.g. hire editors on Discord
     </script>
 </body>
 </html>
-
-
-
