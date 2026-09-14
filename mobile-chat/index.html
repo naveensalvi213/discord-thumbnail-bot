@@ -651,7 +651,20 @@
             }
         });
 
-        // Gemini REST API with Multi-Account Key Auto-Rotation & 503 High-Demand Auto-Retry
+        // Conversation History Memory Management
+        let conversationHistory = JSON.parse(localStorage.getItem("gemini_chat_history") || "[]");
+
+        // Restore chat history UI on page load
+        if (conversationHistory.length > 0) {
+            conversationHistory.forEach(msg => {
+                if (msg.parts && msg.parts[0] && msg.parts[0].text) {
+                    const sender = msg.role === "user" ? "user" : "bot";
+                    appendMessageUI(sender, msg.parts[0].text, false);
+                }
+            });
+        }
+
+        // Gemini REST API with Multi-Turn Conversation Memory & Multi-Account Key Auto-Rotation
         async function fetchGeminiReply(prompt) {
             if (!apiKeysPool || apiKeysPool.length === 0) {
                 return { text: "❌ Error: No API Keys available. Open settings to configure your Gemini API Key.", isTask: false };
@@ -666,7 +679,13 @@
             const uniqueModels = [...new Set(validModels)];
 
             const systemInstruction = `You are Antigravity OmniChat AI, an intelligent personal assistant capable of both conversation and structuring web/automation tasks. 
-If the user asks to perform a web or external task (e.g. hire editors on Discord, send messages, post updates, scrape web, browse sites), respond by outlining a clear step-by-step execution plan and format your task parameters clearly.`;
+If the user asks to perform a web or external task (e.g. hire editors on Discord, send messages, post updates, scrape web, browse sites), respond by outlining a clear step-by-step execution plan and format your task parameters clearly. Remember context from previous user turns in this conversation.`;
+
+            // Prepare payload contents with FULL conversation history memory!
+            const historyPayload = [
+                ...conversationHistory,
+                { role: "user", parts: [{ text: prompt }] }
+            ];
 
             for (const targetModel of uniqueModels) {
                 let attempts = 0;
@@ -680,9 +699,7 @@ If the user asks to perform a web or external task (e.g. hire editors on Discord
                         system_instruction: {
                             parts: [{ text: systemInstruction }]
                         },
-                        contents: [{
-                            parts: [{ text: prompt }]
-                        }]
+                        contents: historyPayload
                     };
 
                     for (let retry = 0; retry < 3; retry++) {
@@ -715,6 +732,18 @@ If the user asks to perform a web or external task (e.g. hire editors on Discord
                             const data = await response.json();
                             const reply = data.candidates?.[0]?.content?.parts?.[0]?.text;
                             
+                            if (reply) {
+                                // Save successful turns to memory!
+                                conversationHistory.push({ role: "user", parts: [{ text: prompt }] });
+                                conversationHistory.push({ role: "model", parts: [{ text: reply }] });
+                                
+                                // Keep history length manageable (last 30 turns)
+                                if (conversationHistory.length > 60) {
+                                    conversationHistory = conversationHistory.slice(conversationHistory.length - 60);
+                                }
+                                localStorage.setItem("gemini_chat_history", JSON.stringify(conversationHistory));
+                            }
+
                             const taskKeywords = ["hire", "discord", "post", "scrape", "automate", "dm", "browser", "send message", "script"];
                             const isTaskIntent = taskKeywords.some(kw => prompt.toLowerCase().includes(kw));
 
@@ -736,12 +765,17 @@ If the user asks to perform a web or external task (e.g. hire editors on Discord
             return { text: "⚠️ Google's Gemini servers are experiencing temporary high demand (HTTP 503). Retrying your prompt in 5 seconds usually works immediately!", isTask: false };
         }
 
+        // Append UI Message Helper
+        function appendMessageUI(sender, text, isTask = false, promptText = '') {
+            appendMessage(sender, text, isTask, promptText);
+        }
+
         // Submit message flow
         async function handleSend() {
             const prompt = chatInput.value.trim();
             if (!prompt) return;
 
-            appendMessage("user", prompt);
+            appendMessageUI("user", prompt);
             chatInput.value = "";
 
             const loadingMsg = document.createElement("div");
@@ -753,7 +787,7 @@ If the user asks to perform a web or external task (e.g. hire editors on Discord
             const result = await fetchGeminiReply(prompt);
             
             loadingMsg.remove();
-            appendMessage("bot", result.text, result.isTask, prompt);
+            appendMessageUI("bot", result.text, result.isTask, prompt);
         }
 
         sendBtn.addEventListener("click", handleSend);
@@ -765,5 +799,6 @@ If the user asks to perform a web or external task (e.g. hire editors on Discord
     </script>
 </body>
 </html>
+
 
 
