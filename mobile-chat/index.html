@@ -1,0 +1,769 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="description" content="A standalone, mobile-responsive AI chat client running entirely in your browser using Gemini.">
+    <title>Antigravity Mobile Chat</title>
+    <!-- Outfit & Inter Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0b0b0c;
+            --chat-bg: #151517;
+            --input-bg: #1e1e21;
+            --border-color: rgba(255, 255, 255, 0.08);
+            --primary: #8b5cf6;
+            --secondary: #06b6d4;
+            --text-color: #f3f4f6;
+            --text-muted: #9ca3af;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: 'Inter', sans-serif;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+        }
+
+        /* Mobile Container Simulation on Desktop, Fullscreen on Mobile */
+        .app-container {
+            width: 100%;
+            height: 100%;
+            max-width: 480px;
+            background-color: var(--chat-bg);
+            border-left: 1px solid var(--border-color);
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+        }
+
+        /* Header */
+        header {
+            padding: 16px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border-color);
+            background-color: rgba(21, 21, 23, 0.95);
+            backdrop-filter: blur(8px);
+            z-index: 10;
+        }
+
+        .header-title {
+            font-family: 'Outfit', sans-serif;
+            font-size: 18px;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--secondary), var(--primary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .settings-btn {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            font-size: 20px;
+            cursor: pointer;
+            transition: color 0.2s;
+            padding: 4px;
+        }
+
+        .settings-btn:hover {
+            color: white;
+        }
+
+        /* Chat Body */
+        .chat-body {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            background-image: radial-gradient(circle at 50% 10%, rgba(139, 92, 246, 0.03) 0%, transparent 50%);
+        }
+
+        .chat-msg {
+            max-width: 85%;
+            padding: 12px 16px;
+            border-radius: 16px;
+            font-size: 14px;
+            line-height: 1.5;
+            word-wrap: break-word;
+            animation: fadeIn 0.3s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .chat-msg.bot {
+            background-color: rgba(255, 255, 255, 0.04);
+            color: var(--text-color);
+            align-self: flex-start;
+            border-top-left-radius: 0;
+            border: 1px solid var(--border-color);
+        }
+
+        .chat-msg.user {
+            background: linear-gradient(135deg, var(--primary), #7c3aed);
+            color: white;
+            align-self: flex-end;
+            border-top-right-radius: 0;
+            box-shadow: 0 4px 12px rgba(139, 92, 246, 0.2);
+        }
+
+        /* Markdown Formatting within Bubbles */
+        .chat-msg p {
+            margin-bottom: 8px;
+        }
+        .chat-msg p:last-child {
+            margin-bottom: 0;
+        }
+        .chat-msg strong {
+            color: #fff;
+            font-weight: 600;
+        }
+        .chat-msg code {
+            background-color: rgba(255, 255, 255, 0.1);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 13px;
+        }
+        .chat-msg pre {
+            background-color: #0c0c0d;
+            padding: 12px;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin: 10px 0;
+            border: 1px solid var(--border-color);
+        }
+        .chat-msg pre code {
+            background-color: transparent;
+            padding: 0;
+            font-size: 12px;
+        }
+        .chat-msg ul, .chat-msg ol {
+            margin-left: 20px;
+            margin-bottom: 8px;
+        }
+
+        /* Input Panel */
+        .input-panel {
+            padding: 16px 20px 24px 20px;
+            border-top: 1px solid var(--border-color);
+            background-color: var(--chat-bg);
+        }
+
+        .input-container {
+            display: flex;
+            align-items: center;
+            background-color: var(--input-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 28px;
+            padding: 6px 6px 6px 16px;
+            gap: 10px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        }
+
+        .chat-input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            outline: none;
+            color: white;
+            font-size: 14px;
+            font-family: inherit;
+            padding: 8px 0;
+            resize: none;
+            max-height: 100px;
+        }
+
+        .chat-input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .icon-btn {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            transition: background-color 0.2s, transform 0.1s;
+        }
+
+        .mic-btn {
+            background-color: rgba(255, 255, 255, 0.05);
+            color: var(--text-muted);
+        }
+
+        .mic-btn.active {
+            background-color: #ef4444;
+            color: white;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+            70% { transform: scale(1.05); box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+            100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+
+        .send-btn {
+            background: linear-gradient(135deg, var(--secondary), var(--primary));
+            color: black;
+            font-weight: 700;
+        }
+
+        .send-btn:hover {
+            transform: scale(1.05);
+        }
+
+        /* Settings Overlay */
+        .settings-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(11, 11, 12, 0.95);
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            padding: 30px 24px;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+
+        .settings-overlay.active {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .settings-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+        }
+
+        .settings-title {
+            font-family: 'Outfit', sans-serif;
+            font-size: 20px;
+            font-weight: 700;
+        }
+
+        .close-btn {
+            background: transparent;
+            border: none;
+            color: var(--text-color);
+            font-size: 28px;
+            cursor: pointer;
+        }
+
+        .settings-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-bottom: 20px;
+        }
+
+        .settings-group label {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .settings-input {
+            background-color: var(--input-bg);
+            border: 1px solid var(--border-color);
+            color: white;
+            padding: 12px 16px;
+            border-radius: 10px;
+            font-size: 14px;
+            outline: none;
+            width: 100%;
+        }
+
+        .settings-select {
+            background-color: var(--input-bg);
+            border: 1px solid var(--border-color);
+            color: white;
+            padding: 12px 16px;
+            border-radius: 10px;
+            font-size: 14px;
+            outline: none;
+            width: 100%;
+            cursor: pointer;
+        }
+
+        .save-btn {
+            margin-top: auto;
+            background: linear-gradient(135deg, var(--secondary), var(--primary));
+            color: black;
+            border: none;
+            padding: 14px;
+            border-radius: 12px;
+            font-weight: 700;
+            font-size: 15px;
+            cursor: pointer;
+            transition: transform 0.1s;
+        }
+
+        .save-btn:active {
+            transform: scale(0.98);
+        }
+    </style>
+</head>
+<body>
+
+    <div class="app-container">
+        <!-- Header -->
+        <header>
+            <span class="header-title">Antigravity AI</span>
+            <div style="display: flex; gap: 8px;">
+                <button class="settings-btn" id="drawer-toggle-btn" title="View Automation Status">⚡</button>
+                <button class="settings-btn" id="settings-btn" aria-label="Open Settings">⚙️</button>
+            </div>
+        </header>
+
+        <!-- Chat Output -->
+        <div class="chat-body" id="chat-body">
+            <div class="chat-msg bot">
+                Hey! 👋 I am your AI assistant & Browser Automation controller. 
+                <br><br>
+                Ask me anything or tell me to perform a task (e.g. *"Hire editors on Discord"* or *"Browse to website X"*).
+            </div>
+        </div>
+
+        <!-- Input Panel -->
+        <div class="input-panel">
+            <div class="input-container">
+                <button class="icon-btn mic-btn" id="mic-btn" aria-label="Dictate message">🎤</button>
+                <input type="text" class="chat-input" id="chat-input" placeholder="Ask anything or request browser task..." aria-label="Message input">
+                <button class="icon-btn send-btn" id="send-btn" aria-label="Send message">➔</button>
+            </div>
+        </div>
+
+        <!-- Automation Drawer Overlay -->
+        <div class="settings-overlay" id="automation-overlay">
+            <div class="settings-header">
+                <span class="settings-title">⚡ Browser Automation Worker</span>
+                <button class="close-btn" id="close-automation" aria-label="Close Drawer">×</button>
+            </div>
+
+            <div id="automation-status-bar" style="padding: 10px; background: rgba(6, 182, 212, 0.1); border: 1px solid rgba(6, 182, 212, 0.3); border-radius: 10px; font-size: 13px; margin-bottom: 16px;">
+                ● WebSocket Connected to Playwright Engine
+            </div>
+
+            <div style="flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px;" id="automation-logs-container">
+                <div style="font-size: 12px; color: var(--text-muted);">Waiting for task execution...</div>
+            </div>
+
+            <div id="screenshot-preview-container" style="margin-top: 10px; display: none;">
+                <label style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700;">Live Browser Preview</label>
+                <img id="live-screenshot" src="" style="width: 100%; border-radius: 10px; border: 1px solid var(--border-color); margin-top: 6px;">
+            </div>
+        </div>
+
+        <!-- Settings Modal Overlay -->
+        <div class="settings-overlay" id="settings-overlay">
+            <div class="settings-header">
+                <span class="settings-title">Configuration & Multi-Account</span>
+                <button class="close-btn" id="close-settings" aria-label="Close Settings">×</button>
+            </div>
+            
+            <div class="settings-group">
+                <label for="api-keys">Gemini API Keys (One per line for Multi-Account Auto-Rotation)</label>
+                <textarea class="settings-input" id="api-keys" rows="4" placeholder="Enter API Key(s)..."></textarea>
+            </div>
+
+            <div class="settings-group">
+                <label for="model-select">Model Brain</label>
+                <select class="settings-select" id="model-select">
+                    <option value="gemini-flash-latest">Gemini Flash (Ultra Fast, Default)</option>
+                    <option value="gemini-pro-latest">Gemini Pro (Deep Reasoning)</option>
+                    <option value="gemini-flash-lite-latest">Gemini Flash Lite (Super Lightweight)</option>
+                </select>
+            </div>
+
+            <button class="save-btn" id="save-settings">Save Configurations</button>
+        </div>
+    </div>
+
+    <script>
+        // Default keys pool (loaded from localStorage or server /api/config)
+        let DEFAULT_KEYS = [];
+        
+        // Element Bindings
+        const settingsBtn = document.getElementById("settings-btn");
+        const settingsOverlay = document.getElementById("settings-overlay");
+        const closeSettings = document.getElementById("close-settings");
+        const saveSettings = document.getElementById("save-settings");
+        const apiKeysInput = document.getElementById("api-keys");
+        const modelSelect = document.getElementById("model-select");
+
+        const drawerToggleBtn = document.getElementById("drawer-toggle-btn");
+        const automationOverlay = document.getElementById("automation-overlay");
+        const closeAutomation = document.getElementById("close-automation");
+        const automationLogsContainer = document.getElementById("automation-logs-container");
+        const automationStatusBar = document.getElementById("automation-status-bar");
+        const screenshotPreviewContainer = document.getElementById("screenshot-preview-container");
+        const liveScreenshot = document.getElementById("live-screenshot");
+
+        const chatBody = document.getElementById("chat-body");
+        const chatInput = document.getElementById("chat-input");
+        const sendBtn = document.getElementById("send-btn");
+        const micBtn = document.getElementById("mic-btn");
+
+        // Load config from LocalStorage or Server API
+        let savedKeys = localStorage.getItem("gemini_api_keys");
+        let apiKeysPool = savedKeys ? JSON.parse(savedKeys) : [];
+        let activeKeyIndex = 0;
+        let selectedModel = localStorage.getItem("gemini_model") || "gemini-flash-latest";
+
+        // Fetch default server key dynamically if local storage is empty
+        if (apiKeysPool.length === 0) {
+            fetch('/api/config')
+                .then(res => res.json())
+                .then(data => {
+                    if (data.apiKey) {
+                        apiKeysPool = [data.apiKey];
+                        apiKeysInput.value = apiKeysPool.join("\n");
+                    }
+                })
+                .catch(() => {});
+        } else {
+            apiKeysInput.value = apiKeysPool.join("\n");
+        }
+        
+        modelSelect.value = selectedModel;
+
+        // Drawer toggles
+        settingsBtn.addEventListener("click", () => settingsOverlay.classList.add("active"));
+        closeSettings.addEventListener("click", () => settingsOverlay.classList.remove("active"));
+
+        drawerToggleBtn.addEventListener("click", () => automationOverlay.classList.add("active"));
+        closeAutomation.addEventListener("click", () => automationOverlay.classList.remove("active"));
+
+        saveSettings.addEventListener("click", () => {
+            const rawKeys = apiKeysInput.value.split("\n").map(k => k.trim()).filter(k => k.length > 0);
+            apiKeysPool = rawKeys.length > 0 ? rawKeys : DEFAULT_KEYS;
+            activeKeyIndex = 0;
+            selectedModel = modelSelect.value;
+
+            localStorage.setItem("gemini_api_keys", JSON.stringify(apiKeysPool));
+            localStorage.setItem("gemini_model", selectedModel);
+            settingsOverlay.classList.remove("active");
+            
+            appendMessage("bot", `⚙️ Configuration updated! Active keys: **${apiKeysPool.length}** account(s). Model: **${selectedModel}**.`);
+        });
+
+        // WebSocket Client Setup
+        let ws = null;
+        function connectWebSocket() {
+            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${wsProtocol}//${window.location.host}`;
+            
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                automationStatusBar.innerHTML = `<span style="color: #10b981; font-weight: 600;">● WebSocket Connected to Playwright Engine</span>`;
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const msg = JSON.parse(event.data);
+                    if (msg.type === 'automation_log') {
+                        addAutomationLog(msg.data);
+                    }
+                } catch (e) {
+                    console.error("WS Message Error:", e);
+                }
+            };
+
+            ws.onclose = () => {
+                automationStatusBar.innerHTML = `<span style="color: #f59e0b;">● Reconnecting WebSocket...</span>`;
+                setTimeout(connectWebSocket, 3000);
+            };
+
+            ws.onerror = () => {
+                automationStatusBar.innerHTML = `<span style="color: #ef4444;">● Disconnected from Automation Engine</span>`;
+            };
+        }
+
+        connectWebSocket();
+
+        function addAutomationLog(data) {
+            const logEntry = document.createElement("div");
+            logEntry.style.padding = "8px 12px";
+            logEntry.style.background = "rgba(255, 255, 255, 0.04)";
+            logEntry.style.borderRadius = "8px";
+            logEntry.style.fontSize = "13px";
+            logEntry.style.borderLeft = "3px solid #06b6d4";
+
+            logEntry.innerHTML = `<div>${data.log}</div>`;
+            automationLogsContainer.appendChild(logEntry);
+            automationLogsContainer.scrollTop = automationLogsContainer.scrollHeight;
+
+            if (data.screenshot) {
+                screenshotPreviewContainer.style.display = "block";
+                liveScreenshot.src = data.screenshot + '?t=' + Date.now();
+            }
+        }
+
+        function triggerBrowserTask(taskText) {
+            automationOverlay.classList.add("active");
+            automationLogsContainer.innerHTML = '';
+            addAutomationLog({ log: `⏳ Triggering Browser Task: "${taskText}"` });
+
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'run_task', task: taskText }));
+            } else {
+                fetch('/api/automation/run', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ task: taskText })
+                }).catch(err => {
+                    addAutomationLog({ log: `❌ Error sending task to server: ${err.message}` });
+                });
+            }
+        }
+
+        // Chat helpers
+        function scrollToBottom() {
+            chatBody.scrollTop = chatBody.scrollHeight;
+        }
+
+        function appendMessage(sender, text, isTask = false, promptText = '') {
+            const msgDiv = document.createElement("div");
+            msgDiv.classList.add("chat-msg", sender);
+            
+            if (isTask) {
+                const taskId = 'task-btn-' + Math.random().toString(36).substr(2, 9);
+                msgDiv.innerHTML = `
+                    <div style="border-left: 3px solid #06b6d4; padding-left: 10px; margin-bottom: 6px;">
+                        <span style="font-size: 11px; text-transform: uppercase; color: #06b6d4; font-weight: 700;">⚡ Automation Task Parsed</span>
+                    </div>
+                    ${parseMarkdown(text)}
+                    <button id="${taskId}" style="margin-top: 12px; width: 100%; padding: 10px; background: linear-gradient(135deg, #06b6d4, #8b5cf6); color: white; border: none; border-radius: 8px; font-weight: 700; font-size: 13px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px;">
+                        <span>▶ Execute Task on Browser</span>
+                    </button>
+                `;
+                chatBody.appendChild(msgDiv);
+                
+                setTimeout(() => {
+                    const btn = document.getElementById(taskId);
+                    if (btn) {
+                        btn.addEventListener("click", () => triggerBrowserTask(promptText || text));
+                    }
+                }, 100);
+            } else {
+                msgDiv.innerHTML = parseMarkdown(text);
+                chatBody.appendChild(msgDiv);
+            }
+
+            scrollToBottom();
+        }
+
+        // Markdown formatter engine
+        function parseMarkdown(text) {
+            let html = text
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;");
+
+            html = html.replace(/```(?:[a-zA-Z0-9]+)?\n([\s\S]*?)\n```/g, "<pre><code>$1</code></pre>");
+            html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
+            html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+            html = html.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+            html = html.replace(/^\s*-\s+(.+)$/gm, "<ul><li>$1</li></ul>");
+            html = html.replace(/<\/ul>\s*<ul>/g, "");
+            html = html.replace(/\n/g, "<br>");
+
+            return html;
+        }
+
+        // Voice dictation (Web Speech API)
+        let recognition = null;
+        let isRecording = false;
+
+        if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            recognition = new SpeechRecognition();
+            recognition.continuous = false;
+            recognition.interimResults = false;
+            recognition.lang = 'en-US';
+
+            recognition.onstart = () => {
+                isRecording = true;
+                micBtn.classList.add("active");
+            };
+
+            recognition.onerror = (e) => {
+                console.error("Speech Recognition Error", e);
+                isRecording = false;
+                micBtn.classList.remove("active");
+            };
+
+            recognition.onend = () => {
+                isRecording = false;
+                micBtn.classList.remove("active");
+            };
+
+            recognition.onresult = (event) => {
+                const transcript = event.results[0][0].transcript;
+                chatInput.value = transcript;
+            };
+        } else {
+            micBtn.style.display = "none";
+        }
+
+        micBtn.addEventListener("click", () => {
+            if (!recognition) return;
+            if (isRecording) {
+                recognition.stop();
+            } else {
+                recognition.start();
+            }
+        });
+
+        // Gemini REST API with Multi-Account Key Auto-Rotation & 503 High-Demand Auto-Retry
+        async function fetchGeminiReply(prompt) {
+            if (!apiKeysPool || apiKeysPool.length === 0) {
+                return { text: "❌ Error: No API Keys available. Open settings to configure your Gemini API Key.", isTask: false };
+            }
+
+            const validModels = [
+                selectedModel,
+                'gemini-flash-latest',
+                'gemini-flash-lite-latest',
+                'gemini-pro-latest'
+            ];
+            const uniqueModels = [...new Set(validModels)];
+
+            const systemInstruction = `You are Antigravity OmniChat AI, an intelligent personal assistant capable of both conversation and structuring web/automation tasks. 
+If the user asks to perform a web or external task (e.g. hire editors on Discord, send messages, post updates, scrape web, browse sites), respond by outlining a clear step-by-step execution plan and format your task parameters clearly.`;
+
+            for (const targetModel of uniqueModels) {
+                let attempts = 0;
+                const maxKeyAttempts = apiKeysPool.length;
+
+                while (attempts < maxKeyAttempts) {
+                    const currentKey = apiKeysPool[activeKeyIndex];
+                    const url = `https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${currentKey}`;
+                    
+                    const requestBody = {
+                        system_instruction: {
+                            parts: [{ text: systemInstruction }]
+                        },
+                        contents: [{
+                            parts: [{ text: prompt }]
+                        }]
+                    };
+
+                    for (let retry = 0; retry < 3; retry++) {
+                        try {
+                            const response = await fetch(url, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify(requestBody)
+                            });
+
+                            if (response.status === 503) {
+                                console.warn(`⚠️ 503 High Demand on ${targetModel} (Retry ${retry + 1}/3). Waiting 1.5s...`);
+                                await new Promise(res => setTimeout(res, 1500));
+                                continue;
+                            }
+
+                            if (response.status === 429) {
+                                console.warn(`⚠️ Key index ${activeKeyIndex} rate limited (429). Rotating key...`);
+                                activeKeyIndex = (activeKeyIndex + 1) % apiKeysPool.length;
+                                attempts++;
+                                break;
+                            }
+
+                            if (!response.ok) {
+                                const errData = await response.json();
+                                console.error(`API error HTTP ${response.status}:`, errData);
+                                break;
+                            }
+
+                            const data = await response.json();
+                            const reply = data.candidates?.[0]?.content?.parts?.[0]?.text;
+                            
+                            const taskKeywords = ["hire", "discord", "post", "scrape", "automate", "dm", "browser", "send message", "script"];
+                            const isTaskIntent = taskKeywords.some(kw => prompt.toLowerCase().includes(kw));
+
+                            return { 
+                                text: reply || "⚠️ Received empty response from model.", 
+                                isTask: isTaskIntent 
+                            };
+                        } catch (err) {
+                            console.error("Fetch attempt error:", err);
+                            await new Promise(res => setTimeout(res, 1000));
+                        }
+                    }
+
+                    activeKeyIndex = (activeKeyIndex + 1) % apiKeysPool.length;
+                    attempts++;
+                }
+            }
+
+            return { text: "⚠️ Google's Gemini servers are experiencing temporary high demand (HTTP 503). Retrying your prompt in 5 seconds usually works immediately!", isTask: false };
+        }
+
+        // Submit message flow
+        async function handleSend() {
+            const prompt = chatInput.value.trim();
+            if (!prompt) return;
+
+            appendMessage("user", prompt);
+            chatInput.value = "";
+
+            const loadingMsg = document.createElement("div");
+            loadingMsg.classList.add("chat-msg", "bot");
+            loadingMsg.innerHTML = "Thinking...";
+            chatBody.appendChild(loadingMsg);
+            scrollToBottom();
+
+            const result = await fetchGeminiReply(prompt);
+            
+            loadingMsg.remove();
+            appendMessage("bot", result.text, result.isTask, prompt);
+        }
+
+        sendBtn.addEventListener("click", handleSend);
+        chatInput.addEventListener("keypress", (e) => {
+            if (e.key === "Enter") {
+                handleSend();
+            }
+        });
+    </script>
+</body>
+</html>
+
+

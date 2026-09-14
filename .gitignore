@@ -40,3 +40,10 @@ out/
 # Python / PyInstaller build artifacts
 build/
 *.spec
+
+# User Browser Data & Sessions
+user_data/
+user_credits.json
+mobile-chat/screenshots/*
+!mobile-chat/screenshots/.gitkeep
+

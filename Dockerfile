@@ -1,28 +1,23 @@
-FROM node:20-alpine AS base
+# Use official Playwright Ubuntu image with pre-installed Chromium browsers
+FROM mcr.microsoft.com/playwright:v1.42.0-jammy
+
+# Set working directory
 WORKDIR /app
 
-# Install dependencies
-FROM base AS deps
+# Copy package files
 COPY package*.json ./
-COPY packages/Vibe-Workflow/packages/workflow-builder/package*.json ./packages/Vibe-Workflow/packages/workflow-builder/
-COPY packages/Open-Poe-AI/packages/agents/package*.json ./packages/Open-Poe-AI/packages/agents/
-COPY packages/Open-AI-Design-Agent/packages/design-agent/package*.json ./packages/Open-AI-Design-Agent/packages/design-agent/
-COPY packages/studio/package*.json ./packages/studio/
-RUN npm install
 
-# Build sub-packages
-FROM deps AS builder
+# Install dependencies
+RUN npm ci
+
+# Copy application files
 COPY . .
-RUN npm run build:packages
-RUN npm run build
 
-# Production runner
-FROM base AS runner
-ENV NODE_ENV=production
-COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package.json ./package.json
-
+# Expose server port
 EXPOSE 3000
-CMD ["npm", "start"]
+
+# Set environment to production
+ENV NODE_ENV=production
+
+# Start server
+CMD ["node", "server.js"]
