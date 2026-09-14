@@ -109,10 +109,12 @@ Interactive Page Elements Available:
 ${JSON.stringify(pageElements, null, 2)}
 
 Analyze the screenshot and page elements. Determine the single NEXT action to perform towards the goal.
+CRITICAL RULE: DO NOT return action: "finish" until the goal is 100% complete and verified on the screenshot. If you need to click buttons, open menus, edit profile settings, or click Save, return action "click" or "type".
+
 Respond strictly in JSON format (no markdown fences, just pure JSON):
 {
   "action": "click" | "type" | "press_enter" | "scroll" | "navigate" | "finish",
-  "selector": "CSS selector or element text to target",
+  "selector": "CSS selector or exact element text to click",
   "text": "text to type if action is type or target url if navigate",
   "reason": "short explanation of why this step is taken"
 }`;
@@ -160,7 +162,7 @@ Respond strictly in JSON format (no markdown fences, just pure JSON):
         }
     }
 
-    return { action: 'finish', reason: 'Task completed or max reasoning attempts reached' };
+    return { action: 'finish', reason: 'Max reasoning attempts reached' };
 }
 
 /**
@@ -192,8 +194,8 @@ export async function runAutomationTask(taskDescription, logCallback = () => {})
         let screenshot = await captureScreenshotBase64(page);
         logCallback({ step: 'page_loaded', log: `📄 Loaded ${page.url()}`, screenshot });
 
-        // Step 2: Multi-step AI Action Execution Loop (Up to 6 steps)
-        const maxSteps = 6;
+        // Step 2: Multi-step AI Action Execution Loop (Up to 25 steps for complete tasks!)
+        const maxSteps = 25;
         for (let step = 1; step <= maxSteps; step++) {
             const pageTitle = await page.title();
             const currentUrl = page.url();
@@ -211,17 +213,28 @@ export async function runAutomationTask(taskDescription, logCallback = () => {})
 
             logCallback({ step: `action_${step}`, log: `⚡ Action (${decision.action}): ${decision.reason || decision.selector}` });
 
-            // Execute Decision
+            // Execute Decision with multi-strategy click fallbacks
             try {
                 if (decision.action === 'navigate' && decision.text) {
                     await page.goto(decision.text, { waitUntil: 'domcontentloaded' });
-                } else if (decision.action === 'click' && decision.selector) {
-                    const el = await page.$(decision.selector).catch(() => null);
-                    if (el) {
-                        await el.click().catch(() => {});
-                    } else {
-                        // Click by text fallback
-                        await page.click(`text="${decision.selector}"`).catch(() => {});
+                } else if (decision.action === 'click') {
+                    const target = decision.selector || decision.text;
+                    if (target) {
+                        let clicked = await page.click(target, { timeout: 3000 }).then(() => true).catch(() => false);
+                        if (!clicked) {
+                            clicked = await page.click(`text="${target}"`, { timeout: 3000 }).then(() => true).catch(() => false);
+                        }
+                        if (!clicked) {
+                            clicked = await page.click(`text=${target}`, { timeout: 3000 }).then(() => true).catch(() => false);
+                        }
+                        if (!clicked) {
+                            // Fallback: evaluate document click by text content
+                            await page.evaluate((textToClick) => {
+                                const elements = Array.from(document.querySelectorAll('button, a, div, span, li'));
+                                const match = elements.find(e => e.innerText && e.innerText.trim().toLowerCase().includes(textToClick.toLowerCase()));
+                                if (match) match.click();
+                            }, target).catch(() => {});
+                        }
                     }
                 } else if (decision.action === 'type' && decision.text) {
                     if (decision.selector) {
@@ -245,7 +258,7 @@ export async function runAutomationTask(taskDescription, logCallback = () => {})
         }
 
         const duration = Math.round((Date.now() - startTime) / 1000);
-        logCallback({ step: 'finished', log: `🎉 Task process complete in ${duration}s.` });
+        logCallback({ step: 'finished', log: `🎉 Task process complete in ${duration}s.`, screenshot });
         return { success: true };
     } catch (err) {
         console.error("Automation error:", err);
